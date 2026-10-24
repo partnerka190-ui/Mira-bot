@@ -1,10 +1,13 @@
-"""Рисует фирменную колоду «Мира»: 78 карт + рубашка. Запуск: python -m tools.make_deck"""
+"""Рисует фирменную колоду «Мира»: 78 карт + рубашка. Запуск: python -m tools.make_deck [id ...]
+
+Если в assets/art/ есть иллюстрация карты (её рисует tools/gen_art.py через GigaChat),
+она вставляется в арочное окно ар-нуво; иначе в окне рисуется золотая эмблема."""
 import math
 import random
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -16,6 +19,9 @@ GOLD_SOFT = (217, 178, 111, 90)
 TOP_C, BOTTOM_C = (16, 14, 38), (52, 28, 74)
 FONT = ROOT / "assets" / "fonts" / "Cormorant-600.ttf"
 OUT = ROOT / "assets" / "cards"
+ART = ROOT / "assets" / "art"
+# Арочное окно под иллюстрацию: x0, y0, x1, y1 в итоговых пикселях
+WIN = (96, 178, 804, 1178)
 
 
 def font(size):
@@ -158,20 +164,77 @@ def centered(d, text, y, size):
     d.text(((W * S - w) / 2, y), text, font=f, fill=GOLD)
 
 
+def arch_mask(box, inset=0):
+    x0, y0, x1, y1 = [v * S for v in box]
+    x0, y0, x1, y1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
+    r = (x1 - x0) / 2
+    m = Image.new("L", (W * S, H * S), 0)
+    d = ImageDraw.Draw(m)
+    d.ellipse([x0, y0, x1, y0 + 2 * r], fill=255)
+    d.rectangle([x0, y0 + r, x1, y1], fill=255)
+    return m
+
+
+def arch_outline(d, box, inset, width):
+    x0, y0, x1, y1 = [v * S for v in box]
+    x0, y0, x1, y1 = x0 + inset, y0 + inset, x1 - inset, y1 - inset
+    r = (x1 - x0) / 2
+    d.arc([x0, y0, x1, y0 + 2 * r], 180, 360, fill=GOLD, width=width * S)
+    d.line([(x0, y0 + r), (x0, y1)], fill=GOLD, width=width * S)
+    d.line([(x1, y0 + r), (x1, y1)], fill=GOLD, width=width * S)
+    d.line([(x0, y1), (x1, y1)], fill=GOLD, width=width * S)
+
+
+def grade(art, size):
+    """Подгоняет иллюстрацию под палитру колоды: кадрирование, лёгкий сине-фиолетовый тон и виньетка."""
+    art = ImageOps.fit(art.convert("RGB"), size, Image.LANCZOS, centering=(0.5, 0.4))
+    art = ImageEnhance.Color(art).enhance(0.9)
+    tone = Image.new("RGB", size, (40, 28, 90))
+    art = Image.blend(art, Image.composite(art, tone, ImageOps.grayscale(art)), 0.25)
+    vignette = Image.new("L", size, 0)
+    w, h = size
+    ImageDraw.Draw(vignette).ellipse([-w * 0.15, -h * 0.05, w * 1.15, h * 1.1], fill=255)
+    vignette = vignette.filter(ImageFilter.GaussianBlur(w // 8))
+    return Image.composite(art, Image.new("RGB", size, (12, 10, 30)), vignette)
+
+
+def ornament(d, cx, y, half):
+    """Золотая линия с ромбом посередине — разделитель под названием."""
+    d.line([(cx - half, y), (cx - 14 * S, y)], fill=GOLD, width=2 * S)
+    d.line([(cx + 14 * S, y), (cx + half, y)], fill=GOLD, width=2 * S)
+    r = 8 * S
+    d.polygon([(cx, y - r), (cx + r, y), (cx, y + r), (cx - r, y)], fill=GOLD)
+
+
 def make_card(i, card):
     img = background(i)
     d = ImageDraw.Draw(img)
     frame(d)
-    centered(d, card["numeral"] if card["suit"] is None else "·", 92 * S, 64)
-    cx, cy, R = W * S / 2, H * S * 0.47, W * S * 0.33
-    if card["suit"] is None:
-        emblem_major(d, i, card["name"], cx, cy, R)
+    x0, y0, x1, y1 = [v * S for v in WIN]
+    art_path = next((p for p in (ART / f"{card['id']}.jpg", ART / f"{card['id']}.png") if p.exists()), None)
+    if art_path:
+        art = grade(Image.open(art_path), (int(x1 - x0), int(y1 - y0)))
+        layer = Image.new("RGB", img.size)
+        layer.paste(art, (int(x0), int(y0)))
+        img.paste(layer, (0, 0), arch_mask(WIN))
+        d = ImageDraw.Draw(img)
     else:
-        emblem_minor(d, card, cx, cy, R)
+        cx, cy, R = (x0 + x1) / 2, y0 + (y1 - y0) * 0.55, (x1 - x0) * 0.36
+        if card["suit"] is None:
+            emblem_major(d, i, card["name"], cx, cy, R)
+        else:
+            emblem_minor(d, card, cx, cy, R)
+    arch_outline(d, WIN, 0, 3)
+    arch_outline(d, WIN, 14 * S, 1)
+    numeral = card["numeral"] if card["suit"] is None else "✦"
+    if card["suit"] is not None:
+        star(d, W * S / 2, 112 * S, 22 * S, 9 * S, 4, 2, fill=GOLD)
+    else:
+        centered(d, numeral, 78 * S, 60)
     name = card["name"].upper()
-    size = 64 if len(name) <= 14 else 52 if len(name) <= 18 else 44
-    centered(d, name, H * S - 230 * S, size)
-    d.line([(W * S * 0.38, H * S - 120 * S), (W * S * 0.62, H * S - 120 * S)], fill=GOLD, width=2 * S)
+    size = 62 if len(name) <= 14 else 50 if len(name) <= 18 else 42
+    centered(d, name, 1232 * S + (62 - size) * S // 2, size)
+    ornament(d, W * S / 2, 1352 * S, 150 * S)
     return img.resize((W, H), Image.LANCZOS)
 
 

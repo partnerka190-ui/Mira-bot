@@ -12,10 +12,12 @@ CREATE TABLE IF NOT EXISTS users (
     birth TEXT,
     sign TEXT,
     sphere TEXT,
+    topic TEXT,                           -- love | ex | future | money
+    bait_card TEXT,
     partner_name TEXT,
     adult INTEGER DEFAULT 0,
     source TEXT,
-    step TEXT DEFAULT 'adult',
+    step TEXT DEFAULT 'bait',
     status TEXT DEFAULT 'free',          -- free | trial | active | expired
     paid_until TEXT,
     payment_method_id TEXT,
@@ -23,7 +25,16 @@ CREATE TABLE IF NOT EXISTS users (
     renew_reminded INTEGER DEFAULT 0,
     free_reading_used INTEGER DEFAULT 0,
     single_credits INTEGER DEFAULT 0,
-    pending_final TEXT,                   -- скрытая третья карта бесплатного расклада
+    pending_final TEXT,                   -- устарело, оставлено для старых баз
+    pending_key TEXT,                     -- карта-ключ, ждущая оплаты: {"card","q","a","at"}
+    pending_q TEXT,                       -- вопрос, под который сейчас выбирают карты
+    picks TEXT DEFAULT '[]',              -- номера карт, выбранных из веера
+    flow TEXT,                            -- free | ask | partner | deep — для чего выбираются карты
+    paywall_at TEXT,
+    consent_at TEXT,                      -- когда принята оферта и согласие на автопродление
+    offer_version TEXT,
+    deep_credits INTEGER DEFAULT 0,
+    forecast_credits INTEGER DEFAULT 0,
     memory TEXT DEFAULT '[]',             -- последние вопросы: [{"d","q","cards"}]
     last_card_date TEXT,
     questions_date TEXT,
@@ -37,7 +48,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,
     user_id INTEGER,
-    kind TEXT,                            -- trial | month | single
+    kind TEXT,                            -- trial | month | single | deep | forecast
     amount INTEGER,
     status TEXT,
     created_at TEXT
@@ -69,7 +80,19 @@ class DB:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
+        await self._migrate()
         await self.conn.commit()
+
+    async def _migrate(self):
+        """Добавляет в старую базу колонки, появившиеся в новых версиях."""
+        cur = await self.conn.execute("PRAGMA table_info(users)")
+        have = {r["name"] for r in await cur.fetchall()}
+        body = SCHEMA.split("CREATE TABLE IF NOT EXISTS users (")[1].split(");")[0]
+        for line in body.splitlines():
+            line = line.split("--")[0].strip().rstrip(",")
+            if not line or line.split()[0] in have or "PRIMARY KEY" in line:
+                continue
+            await self.conn.execute(f"ALTER TABLE users ADD COLUMN {line}")
 
     async def user(self, uid):
         cur = await self.conn.execute("SELECT * FROM users WHERE id=?", (uid,))

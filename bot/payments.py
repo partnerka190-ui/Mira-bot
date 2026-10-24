@@ -10,7 +10,9 @@ API = "https://api.yookassa.ru/v3/payments"
 DESCRIPTIONS = {
     "trial": f"Мира: {config.TRIAL_DAYS} дней доступа",
     "month": "Мира: подписка на 30 дней",
-    "single": "Мира: один расклад",
+    "single": "Мира: один ответ карт",
+    "deep": "Мира: большой расклад на отношения",
+    "forecast": "Мира: прогноз на 30 дней",
 }
 
 
@@ -19,7 +21,8 @@ def _auth():
 
 
 def price(kind):
-    return {"trial": config.PRICE_TRIAL, "month": config.PRICE_MONTH, "single": config.PRICE_SINGLE}[kind]
+    return {"trial": config.PRICE_TRIAL, "month": config.PRICE_MONTH, "single": config.PRICE_SINGLE,
+            "deep": config.PRICE_DEEP, "forecast": config.PRICE_FORECAST}[kind]
 
 
 async def _post(payload):
