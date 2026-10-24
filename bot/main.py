@@ -49,7 +49,23 @@ def today():
     return datetime.now(TZ).date().isoformat()
 
 
+TESTER_IDS = {int(t) for t in config.TESTERS if t.isdigit()}
+
+
+def mark_tester(tg_user):
+    if tg_user and tg_user.username and tg_user.username.lower() in config.TESTERS:
+        TESTER_IDS.add(tg_user.id)
+    return tg_user and tg_user.id in TESTER_IDS
+
+
+async def tester_middleware(handler, event, data):
+    mark_tester(event.from_user)
+    return await handler(event, data)
+
+
 def has_access(user):
+    if user["id"] in TESTER_IDS:
+        return True
     until = parse_iso(user["paid_until"])
     return user["status"] in ("trial", "active") and until and until > datetime.now(timezone.utc)
 
@@ -102,6 +118,8 @@ async def start(msg: Message, command: CommandObject):
     if payload == "oferta":
         await send_oferta(msg.bot, msg.chat.id)
         return
+    if msg.from_user.id in TESTER_IDS:
+        await db.delete_user(msg.from_user.id)  # тестировщик каждый раз проходит воронку с нуля
     user = await db.user(msg.from_user.id)
     if user and has_access(user):
         await msg.answer(T.WELCOME_BACK.format(name=user["name"] or ""), reply_markup=MENU)
@@ -293,6 +311,8 @@ async def retry(cb: CallbackQuery):
 
 def spend(user):
     """Списывает один расклад из лимита. Возвращает, чем заплатили, или None, если расклад недоступен."""
+    if user["id"] in TESTER_IDS:
+        return {}, {}
     if has_access(user):
         count = user["questions_today"] if user["questions_date"] == today() else 0
         if count >= config.QUESTIONS_PER_DAY:
@@ -591,6 +611,10 @@ async def big_spread(bot, user, question, kind):
 async def pay(cb: CallbackQuery):
     await cb.answer()
     kind = cb.data.split(":")[1]
+    if cb.from_user.id in TESTER_IDS and not config.YOOKASSA_SHOP_ID:
+        await cb.message.answer(f"🧪 Тестовая оплата «{kind}» засчитана без денег.")
+        await grant(cb.bot, cb.from_user.id, kind)
+        return
     if kind == "trial":
         user = await db.user(cb.from_user.id)
         if has_access(user):
@@ -863,6 +887,8 @@ async def run():
         config.BOT_USERNAME = (await bot.get_me()).username
     log.info("Оферта: %s", await oferta.url())
     dp = Dispatcher()
+    dp.message.outer_middleware(tester_middleware)
+    dp.callback_query.outer_middleware(tester_middleware)
     dp.include_router(router)
     asyncio.create_task(scheduler(bot))
     await dp.start_polling(bot)

@@ -106,6 +106,10 @@ class DB:
         )
         await self.conn.commit()
 
+    async def delete_user(self, uid):
+        await self.conn.execute("DELETE FROM users WHERE id=?", (uid,))
+        await self.conn.commit()
+
     async def update(self, uid, **fields):
         if not fields:
             return

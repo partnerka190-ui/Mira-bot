@@ -16,6 +16,11 @@ def _int(name, default):
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 ADMIN_ID = _int("ADMIN_ID", 0)
+# Тестировщики (Telegram ID или @username через запятую): безлимит, /start каждый раз с нуля,
+# а пока ЮKassa не подключена — оплата засчитывается без денег
+TESTERS = {t.strip().lstrip("@").lower() for t in os.getenv("TESTERS", "onikioron").split(",") if t.strip()}
+if ADMIN_ID:
+    TESTERS.add(str(ADMIN_ID))
 
 GIGACHAT_AUTH_KEY = os.environ["GIGACHAT_AUTH_KEY"]
 # Физлицо: GIGACHAT_API_PERS, ИП/юрлицо: GIGACHAT_API_B2B или GIGACHAT_API_CORP
