@@ -26,12 +26,18 @@ ART = config.ART_DIR
 
 
 async def draw(session, card):
+    raw = await giga_image(session, STYLE, prompt(card))
+    Image.open(io.BytesIO(raw)).convert("RGB").save(ART / f"{card['id']}.jpg", quality=95)
+
+
+async def giga_image(session, system, text):
+    """Одна картинка от GigaChat по описанию; возвращает байты JPG."""
     token = await giga._auth(session)
     client = str(uuid.uuid4())
     headers = {"Authorization": f"Bearer {token}", "X-Client-ID": client}
     payload = {
         "model": config.GIGACHAT_MODEL,
-        "messages": [{"role": "system", "content": STYLE}, {"role": "user", "content": prompt(card)}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
         "function_call": "auto",
     }
     async with session.post(CHAT_URL, json=payload, headers=headers, ssl=giga.connector_ssl) as r:
@@ -44,8 +50,7 @@ async def draw(session, card):
         raise RuntimeError(f"нет картинки в ответе: {content[:200]}")
     async with session.get(FILES_URL.format(m.group(1)), headers={**headers, "Accept": "application/jpg"}, ssl=giga.connector_ssl) as r:
         r.raise_for_status()
-        raw = await r.read()
-    Image.open(io.BytesIO(raw)).convert("RGB").save(ART / f"{card['id']}.jpg", quality=95)
+        return await r.read()
 
 
 def preview(ids):
