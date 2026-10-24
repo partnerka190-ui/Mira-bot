@@ -1,0 +1,7 @@
+.env
+data/
+venv/
+out/
+__pycache__/
+assets/cards/
+*.cer

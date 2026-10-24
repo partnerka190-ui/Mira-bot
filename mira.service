@@ -1,0 +1,12 @@
+[Unit]
+Description=Mira tarot bot
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/mira
+ExecStart=/opt/mira/venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
