@@ -38,7 +38,7 @@ MIN_DUR = {"hook": 2.2, "pick3": 3.0, "reveal": 3.0, "list": 4.0, "cta": 3.2}
 # Безопасная зона Reels: сверху шапка (~250 px), снизу подпись и профиль (от ~1480),
 # справа колонка лайков/комментариев (x > ~930 при y > ~1000). Всё важное — внутри.
 SUB_Y = 1300
-SUB_CX = 500  # субтитры чуть левее центра, чтобы не задевать кнопки справа
+SUB_CX = W // 2  # фразы короткие (до ~600 px), так что по центру до кнопок справа не достают
 _fonts = {}
 
 
@@ -321,6 +321,24 @@ def text_width(text, name, size):
     return font(name, size).getlength(text)
 
 
+# ---------- Переносы ----------
+
+# Предлоги, союзы и частицы не остаются в конце строки — переносятся вместе со следующим словом
+GLUE = set("""в во на с со к ко о об обо у из за по от до для без под над при про через между перед
+и а но или да либо то что чтобы как если когда ведь не ни же ли бы вот лишь""".split())
+
+
+def glue_words(words):
+    """Склеивает служебные слова со следующим, а тире — с предыдущим: список «неразрывных» кусков."""
+    out = []
+    for w in words:
+        if out and (out[-1].split()[-1].lower() in GLUE or w in ("—", "–")):
+            out[-1] += " " + w
+        else:
+            out.append(w)
+    return out
+
+
 # ---------- Субтитры ----------
 
 def chunks(words, max_words=3, max_chars=20):
@@ -328,7 +346,8 @@ def chunks(words, max_words=3, max_chars=20):
     out, cur = [], []
     for w in words:
         text = " ".join(x[2] for x in cur + [w])
-        if cur and (len(cur) >= max_words or len(text) > max_chars or re.search(r"[.!?…,]$", cur[-1][2])):
+        glued = cur and (cur[-1][2].lower() in GLUE or w[2] in ("—", "–"))
+        if cur and not glued and (len(cur) >= max_words or len(text) > max_chars or re.search(r"[.!?…,]$", cur[-1][2])):
             out.append(cur)
             cur = []
         cur.append(w)
@@ -375,7 +394,7 @@ def title(frame, text, y=200, size=92, t=9.0):
     lines = []
     for para in text.split("\n"):
         cur = ""
-        for word in para.split():
+        for word in glue_words(para.split()):
             test = f"{cur} {word}".strip()
             if cur and text_width(test, TITLE_FONT, size) > W - 200:
                 lines.append(cur)
