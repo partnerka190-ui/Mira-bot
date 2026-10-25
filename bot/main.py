@@ -14,7 +14,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
-from . import config, images, llm, oferta, payments, stats
+from . import broadcast, config, images, llm, oferta, payments, stats
 from . import texts as T
 from .cards import BY_ID, DECK
 from .db import DB, now_iso, parse_iso
@@ -913,8 +913,12 @@ async def run():
     dp.message.outer_middleware(tester_middleware)
     dp.callback_query.outer_middleware(tester_middleware)
     dp["testers"] = TESTER_IDS
-    stats.setup(db, lambda u: mark_tester(u) or (config.ADMIN_ID and u.id == config.ADMIN_ID))
-    dp.include_router(stats.router)  # раньше основного: там есть обработчик любого текста
+    admin = lambda u: bool(mark_tester(u) or (config.ADMIN_ID and u.id == config.ADMIN_ID))
+    stats.setup(db, admin)
+    broadcast.setup(db, admin)
+    # админские роутеры раньше основного: там есть обработчик любого текста
+    dp.include_router(stats.router)
+    dp.include_router(broadcast.router)
     dp.include_router(router)
     asyncio.create_task(scheduler(bot))
     await dp.start_polling(bot)
