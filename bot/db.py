@@ -43,8 +43,17 @@ CREATE TABLE IF NOT EXISTS users (
     followup_sent INTEGER DEFAULT 1,
     nurture_stage INTEGER DEFAULT 0,
     blocked INTEGER DEFAULT 0,
+    last_seen TEXT,
     created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS events (
+    user_id INTEGER,
+    event TEXT,                           -- start | bait | go | sphere | question | paywall | pay_click | later | paid
+    source TEXT,                          -- метка входа пользователя (rNN, rNN_2, direct…)
+    detail TEXT,
+    at TEXT
+);
+CREATE INDEX IF NOT EXISTS events_at ON events (at);
 CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,
     user_id INTEGER,
@@ -81,6 +90,7 @@ class DB:
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
         await self._migrate()
+        await self._backfill_events()
         await self.conn.commit()
 
     async def _migrate(self):
@@ -93,6 +103,34 @@ class DB:
             if not line or line.split()[0] in have or "PRIMARY KEY" in line:
                 continue
             await self.conn.execute(f"ALTER TABLE users ADD COLUMN {line}")
+
+    async def _backfill_events(self):
+        """Один раз восстанавливает журнал событий по уже накопленным данным, чтобы статистика не начиналась с нуля."""
+        cur = await self.conn.execute("SELECT COUNT(*) FROM events")
+        if (await cur.fetchone())[0]:
+            return
+        await self.conn.execute(
+            "INSERT INTO events SELECT id, 'start', source, NULL, created_at FROM users WHERE created_at IS NOT NULL")
+        await self.conn.execute(
+            "INSERT INTO events SELECT id, 'paywall', source, NULL, paywall_at FROM users WHERE paywall_at IS NOT NULL")
+        await self.conn.execute(
+            "INSERT INTO events SELECT p.user_id, 'paid', u.source, p.kind, p.created_at FROM payments p "
+            "LEFT JOIN users u ON u.id = p.user_id WHERE p.status = 'succeeded'")
+
+    async def log(self, uid, event, detail=None):
+        await self.conn.execute(
+            "INSERT INTO events (user_id, event, source, detail, at) "
+            "VALUES (?, ?, (SELECT source FROM users WHERE id=?), ?, ?)",
+            (uid, event, uid, detail, now_iso()))
+        await self.conn.commit()
+
+    async def seen(self, uid):
+        await self.conn.execute("UPDATE users SET last_seen=? WHERE id=?", (now_iso(), uid))
+        await self.conn.commit()
+
+    async def rows(self, sql, params=()):
+        cur = await self.conn.execute(sql, params)
+        return [dict(r) for r in await cur.fetchall()]
 
     async def user(self, uid):
         cur = await self.conn.execute("SELECT * FROM users WHERE id=?", (uid,))

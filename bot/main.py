@@ -14,7 +14,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
-from . import config, images, llm, oferta, payments
+from . import config, images, llm, oferta, payments, stats
 from . import texts as T
 from .cards import BY_ID, DECK
 from .db import DB, now_iso, parse_iso
@@ -59,8 +59,19 @@ def mark_tester(tg_user):
 
 
 async def tester_middleware(handler, event, data):
-    mark_tester(event.from_user)
+    if not mark_tester(event.from_user) and event.from_user:
+        await db.seen(event.from_user.id)
     return await handler(event, data)
+
+
+async def track(uid, event, detail=None):
+    """Пишет шаг воронки в журнал для /stats. Тестировщиков не считаем."""
+    if uid in TESTER_IDS:
+        return
+    try:
+        await db.log(uid, event, detail)
+    except Exception:
+        log.exception("event log failed")
 
 
 def has_access(user):
@@ -121,6 +132,8 @@ async def start(msg: Message, command: CommandObject):
     if msg.from_user.id in TESTER_IDS:
         await db.delete_user(msg.from_user.id)  # тестировщик каждый раз проходит воронку с нуля
     user = await db.user(msg.from_user.id)
+    if user:
+        await track(user["id"], "start", payload or "direct")
     if user and has_access(user):
         await msg.answer(T.WELCOME_BACK.format(name=user["name"] or ""), reply_markup=MENU)
         return
@@ -130,6 +143,8 @@ async def start(msg: Message, command: CommandObject):
             await send_key_offer(msg.bot, user, key_of(user)["q"])
         return
     await db.create_user(msg.from_user.id, payload or "direct")
+    if not user:
+        await track(msg.from_user.id, "start", payload or "direct")
     await db.update(msg.from_user.id, step="bait", blocked=0)
     await send_bait(msg.bot, msg.from_user.id, payload)
 
@@ -174,6 +189,7 @@ async def bait(cb: CallbackQuery):
 
 async def reveal_bait(bot, uid, card_id, topic):
     await db.update(uid, step="sphere_wait", bait_card=card_id)
+    await track(uid, "bait", card_id)
     await bot.send_chat_action(uid, "upload_photo")
     try:
         text = await llm.bait_message(card_id, topic)
@@ -192,6 +208,7 @@ async def go(cb: CallbackQuery):
     await cb.answer()
     user = await db.user(cb.from_user.id)
     await cb.message.edit_reply_markup(reply_markup=None)
+    await track(user["id"], "go")
     if user["topic"]:
         await db.update(user["id"], step="name")
         await cb.message.answer(T.ASK_NAME)
@@ -212,6 +229,7 @@ async def sphere(cb: CallbackQuery):
     await cb.answer()
     key = cb.data.split(":")[1]
     await db.update(cb.from_user.id, topic=key, sphere=T.SPHERES[key][1], step="name")
+    await track(cb.from_user.id, "sphere", key)
     await cb.message.edit_text(T.ASK_NAME)
 
 
@@ -244,6 +262,7 @@ async def preset_question(cb: CallbackQuery):
 
 async def start_ritual(bot, user, question, flow, full=True):
     await db.update(user["id"], pending_q=question, picks="[]", flow=flow, step="ritual")
+    await track(user["id"], "question" if flow == "free" else f"ask_{flow}")
     if full:
         await bot.send_message(user["id"], T.RITUAL.format(q=question), reply_markup=kb([(T.RITUAL_BTN, "shuffle")]))
     else:
@@ -369,6 +388,7 @@ async def do_reading(bot, user):
         await bot.send_message(uid, "Можешь задать уточняющий вопрос — я помню контекст 🌙", reply_markup=MENU)
         return
     q, a = parts[3] or "Хочешь узнать, чем всё закончится на самом деле?", parts[4]
+    await track(uid, "paywall")
     await db.update(uid, free_reading_used=1, paywall_at=now_iso(), nurture_stage=0,
                     pending_key=json.dumps({"card": key_card, "q": q, "a": a, "at": now_iso()}, ensure_ascii=False))
     await asyncio.sleep(3)
@@ -405,6 +425,7 @@ async def reveal_key(bot, uid):
 @router.callback_query(F.data == "later")
 async def later(cb: CallbackQuery):
     await cb.answer()
+    await track(cb.from_user.id, "later")
     await cb.message.answer(T.KEY_SINGLE.format(days=config.KEY_TTL_DAYS),
                             reply_markup=kb([(T.KEY_SINGLE_BTN, "pay:single")], [(T.KEY_BTN, "pay:trial")]))
 
@@ -611,6 +632,7 @@ async def big_spread(bot, user, question, kind):
 async def pay(cb: CallbackQuery):
     await cb.answer()
     kind = cb.data.split(":")[1]
+    await track(cb.from_user.id, "pay_click", kind)
     if cb.from_user.id in TESTER_IDS and not config.YOOKASSA_SHOP_ID:
         await cb.message.answer(f"🧪 Тестовая оплата «{kind}» засчитана без денег.")
         await grant(cb.bot, cb.from_user.id, kind)
@@ -669,6 +691,7 @@ async def grant(bot, uid, kind, method=None):
     fields = {}
     if method and method.get("saved") and kind in ("trial", "month"):
         fields["payment_method_id"] = method["id"]
+    await track(uid, "paid", kind)
     if config.ADMIN_ID:
         await safe_send(bot, config.ADMIN_ID, f"💰 {kind}: {payments.price(kind)} ₽ от {uid} (источник: {user['source']})")
 
@@ -889,6 +912,9 @@ async def run():
     dp = Dispatcher()
     dp.message.outer_middleware(tester_middleware)
     dp.callback_query.outer_middleware(tester_middleware)
+    dp["testers"] = TESTER_IDS
+    stats.setup(db, lambda u: mark_tester(u) or (config.ADMIN_ID and u.id == config.ADMIN_ID))
+    dp.include_router(stats.router)  # раньше основного: там есть обработчик любого текста
     dp.include_router(router)
     asyncio.create_task(scheduler(bot))
     await dp.start_polling(bot)
