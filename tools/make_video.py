@@ -1,6 +1,6 @@
 """Ролик в фирменном стиле v2: озвучка, субтитры по словам, частицы, вспышки, звук.
 
-python -m tools.make_video reels/01_pick3_he_thinks.json out/01.mp4 [--engine edge|rhvoice|silent] [--send] [--handle @mira.taro]
+python -m tools.make_video reels/01_pick3_he_thinks.json out/01.mp4 [--engine edge|rhvoice|silent|file --audio voice.mp3] [--send] [--handle @mira.taro]
 
 Каждая сцена в JSON может иметь поле "say" — текст, который озвучивается во время сцены.
 Длительность сцены подстраивается под голос, так что картинка и речь всегда совпадают.
@@ -220,16 +220,24 @@ SCENES = {"hook": scene_hook, "pick3": scene_pick3, "reveal": scene_reveal, "lis
 
 # ---------- Сборка ----------
 
-def build(script, out, engine="edge", handle="@mira.taro"):
+def build(script, out, engine="edge", handle="@mira.taro", audio_file=None):
     global GLOW
     GLOW = glow(700)
     tmp = Path(tempfile.mkdtemp())
     timeline, words_all, voice_parts, fx, t0 = [], [], [], [], 0.0
+    parts = None
+    if engine == "file":
+        voiced = [s for s in script["scenes"] if s.get("say")]
+        parts = iter(voice.split_by_pauses(audio_file, len(voiced), tmp))
     for i, s in enumerate(script["scenes"]):
         say = s.get("say", "")
         if say:
             wav = tmp / f"s{i}.wav"
-            length, words = voice.synth(say, wav, engine)
+            if parts:
+                wav = next(parts)
+                length, words = voice.timed(say, wav)
+            else:
+                length, words = voice.synth(say, wav, engine)
             voice_parts.append((t0 + 0.15, audio.read_wav(wav)))
         else:
             length, words = 0, []
@@ -298,10 +306,11 @@ if __name__ == "__main__":
     ap.add_argument("out")
     ap.add_argument("--engine", default="edge")
     ap.add_argument("--handle", default="@mira.taro")
+    ap.add_argument("--audio", help="готовая озвучка для --engine file")
     ap.add_argument("--send", action="store_true")
     a = ap.parse_args()
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
-    secs = build(json.loads(Path(a.script).read_text()), a.out, a.engine, a.handle)
+    secs = build(json.loads(Path(a.script).read_text()), a.out, a.engine, a.handle, a.audio)
     print(f"Готово: {a.out}, {secs:.1f} сек")
     if a.send:
         import asyncio

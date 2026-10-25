@@ -4,7 +4,7 @@
   edge     — нейроголоса Microsoft (бесплатно, нужен интернет; на сервере работает)
   rhvoice  — офлайн-голос RHVoice, если установлен (pip install rhvoice-wrapper-bin rhvoice-wrapper)
   silent   — без звука, тайминги по длине слов (для черновой проверки картинки)
-Позже сюда же добавим ElevenLabs.
+  file     — готовая озвучка одним файлом (например, ElevenLabs): режется по самым длинным паузам на сцены
 """
 import asyncio
 import re
@@ -97,4 +97,48 @@ def synth(text, out_wav, engine="edge"):
         words, est = _estimate(text)
         k = total / est if est else 1
         words = [(s * k, e * k, w) for s, e, w in words]
+    return total, words
+
+
+def _silences(path, noise="-38dB", min_len=0.3):
+    """[(начало, конец)] пауз в файле по ffmpeg silencedetect."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(path), "-af", f"silencedetect=noise={noise}:d={min_len}",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    starts = [float(x) for x in re.findall(r"silence_start: ([\d.]+)", r.stderr)]
+    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", r.stderr)]
+    return list(zip(starts, ends))
+
+
+def split_by_pauses(src, n, out_dir):
+    """Режет одну дорожку на n кусков по n-1 самым длинным паузам. Возвращает пути к wav."""
+    out_dir = Path(out_dir)
+    full = out_dir / "full.wav"
+    to_wav(src, full)
+    cuts = sorted(sorted(_silences(full), key=lambda p: p[1] - p[0], reverse=True)[:n - 1])
+    if len(cuts) < n - 1:
+        raise RuntimeError(f"в озвучке {len(cuts) + 1} фраз, а сцен с текстом {n}")
+    bounds = [0.0] + [(a + b) / 2 for a, b in cuts] + [duration(full)]
+    paths = []
+    for i in range(n):
+        p = out_dir / f"part{i}.wav"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(full), "-ss", f"{bounds[i]:.3f}",
+                        "-to", f"{bounds[i + 1]:.3f}", str(p)], check=True)
+        paths.append(p)
+    return paths
+
+
+def timed(text, wav):
+    """Тайминги слов для готового куска: каждое предложение растягивается на свой отрезок речи между паузами."""
+    total = duration(wav)
+    sil = _silences(wav, min_len=0.2)
+    edges = [0.0] + [x for p in sil for x in p] + [total]
+    speech = [(a, b) for a, b in zip(edges[::2], edges[1::2]) if b - a > 0.15]
+    sentences = [x.strip() for x in re.findall(r"[^.!?…]+[.!?…]*", text) if x.strip()]
+    if len(sentences) != len(speech):
+        speech, sentences = [(speech[0][0], speech[-1][1])] if speech else [(0, total)], [text]
+    words = []
+    for (a, b), sent in zip(speech, sentences):
+        est, end = _estimate(sent)
+        k = (b - a) / end if end else 1
+        words += [(a + s * k, a + e * k, w) for s, e, w in est]
     return total, words
