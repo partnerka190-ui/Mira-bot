@@ -14,7 +14,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
-from . import broadcast, config, images, llm, oferta, payments, stats
+from . import admin, broadcast, config, images, llm, oferta, payments, stats
 from . import texts as T
 from .cards import BY_ID, DECK
 from .db import DB, now_iso, parse_iso
@@ -59,8 +59,9 @@ def mark_tester(tg_user):
 
 
 async def tester_middleware(handler, event, data):
-    if not mark_tester(event.from_user) and event.from_user:
-        await db.seen(event.from_user.id)
+    if event.from_user:
+        mark_tester(event.from_user)
+        await db.seen(event.from_user.id, event.from_user.username)
     return await handler(event, data)
 
 
@@ -913,10 +914,11 @@ async def run():
     dp.message.outer_middleware(tester_middleware)
     dp.callback_query.outer_middleware(tester_middleware)
     dp["testers"] = TESTER_IDS
-    admin = lambda u: bool(mark_tester(u) or (config.ADMIN_ID and u.id == config.ADMIN_ID))
-    stats.setup(db, admin)
-    broadcast.setup(db, admin)
+    await admin.setup(db, bot)
+    stats.setup(db, admin.is_admin)
+    broadcast.setup(db, admin.is_admin)
     # админские роутеры раньше основного: там есть обработчик любого текста
+    dp.include_router(admin.router)
     dp.include_router(stats.router)
     dp.include_router(broadcast.router)
     dp.include_router(router)

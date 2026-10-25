@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS users (
     nurture_stage INTEGER DEFAULT 0,
     blocked INTEGER DEFAULT 0,
     last_seen TEXT,
+    username TEXT,
     created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS events (
@@ -54,6 +55,11 @@ CREATE TABLE IF NOT EXISTS events (
     at TEXT
 );
 CREATE INDEX IF NOT EXISTS events_at ON events (at);
+CREATE TABLE IF NOT EXISTS admins (
+    key TEXT PRIMARY KEY,                 -- числовой Telegram ID или ник без @ в нижнем регистре
+    added_by INTEGER,
+    at TEXT
+);
 CREATE TABLE IF NOT EXISTS payments (
     id TEXT PRIMARY KEY,
     user_id INTEGER,
@@ -124,8 +130,20 @@ class DB:
             (uid, event, uid, detail, now_iso()))
         await self.conn.commit()
 
-    async def seen(self, uid):
-        await self.conn.execute("UPDATE users SET last_seen=? WHERE id=?", (now_iso(), uid))
+    async def seen(self, uid, username=None):
+        await self.conn.execute("UPDATE users SET last_seen=?, username=? WHERE id=?",
+                                (now_iso(), (username or "").lower() or None, uid))
+        await self.conn.commit()
+
+    async def admins(self):
+        return await self.rows("SELECT * FROM admins ORDER BY at")
+
+    async def add_admin(self, key, added_by):
+        await self.conn.execute("INSERT OR REPLACE INTO admins VALUES (?, ?, ?)", (key, added_by, now_iso()))
+        await self.conn.commit()
+
+    async def remove_admin(self, key):
+        await self.conn.execute("DELETE FROM admins WHERE key=?", (key,))
         await self.conn.commit()
 
     async def rows(self, sql, params=()):

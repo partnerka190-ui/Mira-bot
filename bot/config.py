@@ -21,6 +21,10 @@ ADMIN_ID = _int("ADMIN_ID", 0)
 TESTERS = {t.strip().lstrip("@").lower() for t in os.getenv("TESTERS", "onikioron").split(",") if t.strip()}
 if ADMIN_ID:
     TESTERS.add(str(ADMIN_ID))
+# Владельцы бота: полный доступ к админке и право назначать других админов
+OWNERS = {t.strip().lstrip("@").lower() for t in os.getenv("OWNERS", "onikioron").split(",") if t.strip()}
+if ADMIN_ID:
+    OWNERS.add(str(ADMIN_ID))
 
 GIGACHAT_AUTH_KEY = os.environ["GIGACHAT_AUTH_KEY"]
 # Физлицо: GIGACHAT_API_PERS, ИП/юрлицо: GIGACHAT_API_B2B или GIGACHAT_API_CORP

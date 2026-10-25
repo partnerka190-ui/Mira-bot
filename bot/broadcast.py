@@ -46,15 +46,18 @@ def waiting(msg: Message):
 
 @router.message(Command("broadcast"))
 async def start(msg: Message):
-    if not is_admin(msg.from_user):
+    if is_admin(msg.from_user):
+        await begin(msg.bot, msg.from_user.id)
+
+
+async def begin(bot, uid):
+    if uid in running:
+        await bot.send_message(uid, "Рассылка уже идёт, дождись отчёта.")
         return
-    if msg.from_user.id in running:
-        await msg.answer("Рассылка уже идёт, дождись отчёта.")
-        return
-    drafts[msg.from_user.id] = {"stage": "wait"}
-    await msg.answer("📣 <b>Рассылка</b>\n\nПришли сообщение, которое нужно разослать: текст, фото или видео с подписью, "
-                     "можно с эмодзи и форматированием. Я покажу, как оно будет выглядеть, и спрошу, кому отправить.\n\n"
-                     "Передумал — /cancel_broadcast")
+    drafts[uid] = {"stage": "wait"}
+    await bot.send_message(uid, "📣 <b>Рассылка</b>\n\nПришли сообщение, которое нужно разослать: текст, фото или видео с подписью, "
+                                "можно с эмодзи и форматированием. Я покажу, как оно будет выглядеть, и спрошу, кому отправить.\n\n"
+                                "Передумал — /cancel_broadcast")
 
 
 @router.message(Command("cancel_broadcast"))
