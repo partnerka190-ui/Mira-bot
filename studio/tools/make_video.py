@@ -497,7 +497,7 @@ def scene_cta(s, words):
         title(frame, s.get("text", "Напиши в комментариях"), 270, 80, t)
         place_card(frame, card_img("back", 290), (W - 290) / 2, 470 + 10 * math.sin(t * 2), t, lit=0.6 + 0.25 * math.sin(t * 3))
         word = s.get("word", "КАРТА")
-        size = 130
+        size = s.get("word_size", 130)
         pulse = 1 + 0.04 * math.sin(t * 4)
         im = scale(text_layer(word, TITLE_FONT, size, (236, 196, 130), (150, 85, 30)), pulse)
         a = ease((t - 0.3) / 0.4)
